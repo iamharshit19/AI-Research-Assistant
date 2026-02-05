@@ -1,0 +1,12 @@
+[
+  {
+    "topic": "Explainability in LLMs",
+    "intensity": 0.85,
+    "description": "Limited consensus on how LLMs encode reasoning chains."
+  },
+  {
+    "topic": "Cross-lingual Fairness",
+    "intensity": 0.78,
+    "description": "Few studies evaluate fairness in multilingual NLP models."
+  }
+]
