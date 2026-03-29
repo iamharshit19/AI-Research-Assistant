@@ -7,7 +7,7 @@ from core.file_store import read_json, write_json
 from core.config import UPLOADS_FILE, SUMMARIES_FILE, DATA_DIR
 from core.embeddings import embed_texts
 from core.vectorstore import load_index_and_meta, save_index
-from services.llama_service import call_llm
+from core.llm import call_llm
 
 import faiss
 import pickle
@@ -60,14 +60,16 @@ def generate_summary(text: str, filename: str) -> str:
     max_chars = 8000
     truncated_text = text[:max_chars] if len(text) > max_chars else text
     
-    prompt = f"""Summarize the following document comprehensively.
+    prompt = f"""You are an expert document summarization assistant. Summarize the provided text immediately without asking for further content.
 
-Document: {filename}
+--- DOCUMENT ---
+Filename: {filename}
 
 Content:
 {truncated_text}
+----------------
 
-Provide:
+Based ONLY on the text above, provide:
 1. TLDR (2-3 sentences)
 2. Key points (4-6 bullet points)
 3. Main topics covered

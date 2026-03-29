@@ -1,7 +1,6 @@
 import faiss
 import pickle
 import os
-import faiss
 
 
 from core.config import FAISS_INDEX, META_FILE

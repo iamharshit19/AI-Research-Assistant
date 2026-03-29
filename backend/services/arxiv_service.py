@@ -1,73 +1,154 @@
+import asyncio
 import time
-import xml.etree.ElementTree as ET
 import requests
 import faiss
-from services.llama_service import summarize_paper
 from core.embeddings import embed_texts, embed_query
+from core.llm import summarize_paper, async_summarize_paper
 from core.vectorstore import save_index, load_index_and_meta
-from core.summarizer import summarize_paper
-def fetch_arxiv(topic, field="cs.LG", max_results=40):
-    topic = topic.replace(" ", "+")
-    url = (
-        "https://export.arxiv.org/api/query?"
-        f"search_query=cat:{field}+AND+all:\"{topic}\""
-        "&start=0&max_results=40"
-        "&sortBy=relevance&sortOrder=descending"
-    )
 
-    resp = requests.get(url)
-    root = ET.fromstring(resp.text)
+# Simple in-memory cache
+_cache = {}
+CACHE_TTL = 300  # 5 minutes
+
+SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+FIELDS = "title,abstract,authors,year,citationCount,externalIds,url"
+
+# Map frontend arxiv fields to Semantic Scholar
+FIELD_MAP = {
+    "cs.LG": "Computer Science",
+    "cs.AI": "Computer Science",
+    "cs.CV": "Computer Science",
+    "cs.CL": "Computer Science",
+}
+
+def _get_cached(key):
+    if key in _cache:
+        ts, data = _cache[key]
+        if time.time() - ts < CACHE_TTL:
+            print(f"📦 Cache hit for: {key}")
+            return data
+        del _cache[key]
+    return None
+
+def _set_cache(key, data):
+    _cache[key] = (time.time(), data)
+
+def fetch_arxiv(topic, field="cs.LG", max_results=5):
+    """Fetch ArXiv papers via Semantic Scholar to bypass ArXiv IP bans."""
+    cache_key = f"arxiv:{topic}:{field}"
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    print(f"📚 Fetching ArXiv papers via Semantic Scholar: {topic}")
+
+    params = {
+        "query": topic,
+        "limit": max_results,
+        "fields": FIELDS,
+        "fieldsOfStudy": FIELD_MAP.get(field, "Computer Science"),
+    }
 
     papers = []
-    for entry in root.findall("{http://www.w3.org/2005/Atom}entry"):
-        title = entry.find("{http://www.w3.org/2005/Atom}title").text.strip()
-        abstract = entry.find("{http://www.w3.org/2005/Atom}summary").text.strip()
+    max_retries = 3
+    
+    # Wait before request to space out Scholar vs ArXiv requests
+    time.sleep(2)
 
-        pdf = None
-        for l in entry.findall("{http://www.w3.org/2005/Atom}link"):
-            if l.attrib.get("type") == "application/pdf":
-                pdf = l.attrib["href"]
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(SEMANTIC_SCHOLAR_URL, params=params, timeout=30)
 
-        papers.append({
-            "title": title,
-            "abstract": abstract,
-            "pdf_url": pdf,
-        })
+            if resp.status_code == 429:
+                wait = [5, 10, 20][attempt]
+                print(f"⚠️ Semantic Scholar rate limited on ArXiv search, waiting {wait}s... (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
+                continue
 
-    return papers
+            if resp.status_code != 200:
+                print(f"⚠️ Semantic Scholar returned status {resp.status_code}")
+                return []
+
+            data = resp.json()
+
+            for item in data.get("data", []):
+                title = item.get("title", "Untitled")
+                abstract = item.get("abstract") or "No abstract available"
+                ext_ids = item.get("externalIds", {}) or {}
+
+                # Build ArXiv PDF link
+                arxiv_id = ext_ids.get("ArXiv")
+                if arxiv_id:
+                    pdf_url = f"https://arxiv.org/pdf/{arxiv_id}"
+                elif ext_ids.get("DOI"):
+                    pdf_url = f"https://doi.org/{ext_ids['DOI']}"
+                else:
+                    pdf_url = item.get("url")
+
+                papers.append({
+                    "title": title,
+                    "abstract": abstract,
+                    "pdf_url": pdf_url,
+                })
+
+            print(f"✅ Found {len(papers)} papers")
+            _set_cache(cache_key, papers)
+            return papers
+
+        except requests.exceptions.Timeout:
+            print(f"⚠️ Request timed out (attempt {attempt+1})")
+            time.sleep(3)
+        except Exception as e:
+            print(f"⚠️ Fetch failed: {e}")
+            return []
+
+    return []
 
 
-def arxiv_search_and_summarize(topic, field="cs.LG", top_k=5, summarize=True):
+async def arxiv_search_and_summarize(topic, field="cs.LG", top_k=3, summarize=True):
     papers = fetch_arxiv(topic, field)
-    texts = [p["title"] + " " + p["abstract"] for p in papers]
 
-    # embeddings
+    if not papers:
+        return {
+            "topic": topic,
+            "papers": [],
+            "summaries": [],
+            "aggregate_summary": "No papers found. Please try again."
+        }
+
+    texts = [p["title"] + " " + p["abstract"] for p in papers]
     embeddings = embed_texts(texts)
 
-    # build index
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
 
-    # query embedding
     q_emb = embed_query(topic)
-    D, I = index.search(q_emb, top_k)
+    D, I = index.search(q_emb, min(top_k, len(papers)))
 
+    top_papers = [papers[idx] for idx in I[0]]
     results = []
     summaries = []
 
-    for idx in I[0]:
-        p = papers[idx]
-        entry = p.copy()
+    if summarize:
+        # Generate summaries sequentially (chunked) to avoid Groq TPM limits
+        print("🤖 Generating individual paper summaries...")
+        for p in top_papers:
+            s_result = await async_summarize_paper(p["title"], p["abstract"])
+            summaries.append(s_result)
+            
+            entry = p.copy()
+            entry["summary"] = s_result
+            results.append(entry)
+            
+            # Small delay between LLM calls to prevent TPM spikes
+            await asyncio.sleep(1)
+    else:
+        results = [p.copy() for p in top_papers]
 
-        if summarize:
-            summary = summarize_paper(p["title"], p["abstract"])
-            entry["summary"] = summary
-            summaries.append(summary)
-
-        results.append(entry)
-
-    # NEW — aggregate summary
-    aggregate_summary = generate_aggregate_summary(topic, summaries)
+    aggregate_summary = ""
+    if summaries:
+        print("🤖 Generating aggregate summary...")
+        aggregate_summary = await async_generate_aggregate_summary(topic, summaries)
 
     return {
         "topic": topic,
@@ -76,24 +157,10 @@ def arxiv_search_and_summarize(topic, field="cs.LG", top_k=5, summarize=True):
         "aggregate_summary": aggregate_summary
     }
 
-   
-def generate_aggregate_summary(topic, summaries):
-    joined = "\n\n".join(
-        [f"Paper {i+1}:\n{summary}" for i, summary in enumerate(summaries)]
+
+async def async_generate_aggregate_summary(topic, summaries):
+    joined = "\n\n".join([f"Paper {i+1}:\n{s}" for i, s in enumerate(summaries)])
+    return await async_summarize_paper(
+        f"Aggregate summary for: {topic}",
+        f"Summarize these papers on \"{topic}\":\n\n{joined}\n\nProvide:\n1. 5-line TLDR\n2. Key contributions (4-6 bullets)\n3. Research gaps\n4. Conclusion"
     )
-
-    prompt_title = f"Aggregate summary for topic: {topic}"
-    prompt_abstract = f"""
-Below are summaries of the top papers on the topic "{topic}":
-
-{joined}
-
-Please analyze all summaries and produce a single consolidated literature overview with:
-1. 5-line TLDR
-2. Key contributions across all papers (4–6 bullet points)
-3. Research gaps and future directions
-4. Overall conclusion
-"""
-
-    return summarize_paper(prompt_title, prompt_abstract)
-

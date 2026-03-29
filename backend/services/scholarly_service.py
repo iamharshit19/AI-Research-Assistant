@@ -1,169 +1,192 @@
+import asyncio
 import faiss
-from scholarly import scholarly
-from services.llama_service import summarize_paper
+import time
+import requests
+from core.llm import summarize_paper, async_summarize_paper
 from core.embeddings import embed_texts, embed_query
 from core.vectorstore import save_index, load_index_and_meta
 
+# Simple in-memory cache
+_cache = {}
+CACHE_TTL = 300  # 5 minutes
 
-def fetch_google_scholar(topic, max_results=40, year_low=None, year_high=None):
-    """
-    Fetch papers from Google Scholar.
+SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+FIELDS = "title,abstract,authors,year,citationCount,externalIds,url"
+
+def _get_cached(key):
+    if key in _cache:
+        ts, data = _cache[key]
+        if time.time() - ts < CACHE_TTL:
+            print(f"📦 Cache hit for: {key}")
+            return data
+        del _cache[key]
+    return None
+
+def _set_cache(key, data):
+    _cache[key] = (time.time(), data)
+
+
+def fetch_semantic_scholar(topic, max_results=5, year_low=None, year_high=None):
+    """Fetch papers from Semantic Scholar API (free, no scraping)."""
+    cache_key = f"scholar:{topic}:{year_low}:{year_high}"
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    params = {
+        "query": topic,
+        "limit": max_results,
+        "fields": FIELDS,
+    }
+
+    if year_low and year_high:
+        params["year"] = f"{year_low}-{year_high}"
+    elif year_low:
+        params["year"] = f"{year_low}-"
+    elif year_high:
+        params["year"] = f"-{year_high}"
+
+    print(f"🎓 Fetching Scholar papers: {topic}")
     
-    Args:
-        topic: Search query
-        max_results: Maximum number of results (default 40)
-        year_low: Minimum publication year (optional)
-        year_high: Maximum publication year (optional)
-    
-    Returns:
-        List of paper dictionaries
-    """
     papers = []
+    max_retries = 3
     
-    try:
-        # Search for publications
-        search_query = scholarly.search_pubs(topic)
-        
-        count = 0
-        for result in search_query:
-            if count >= max_results:
-                break
-            
-            try:
-                # Extract paper information
-                title = result.get('bib', {}).get('title', 'No title')
-                abstract = result.get('bib', {}).get('abstract', 'No abstract available')
-                authors = result.get('bib', {}).get('author', [])
-                year = result.get('bib', {}).get('pub_year', 'Unknown')
-                citation_count = result.get('num_citations', 0)
-                pub_url = result.get('pub_url', None)
-                eprint_url = result.get('eprint_url', None)
-                
-                # Filter by year if specified
-                if year_low and year != 'Unknown':
-                    try:
-                        if int(year) < year_low:
-                            continue
-                    except (ValueError, TypeError):
-                        pass
-                
-                if year_high and year != 'Unknown':
-                    try:
-                        if int(year) > year_high:
-                            continue
-                    except (ValueError, TypeError):
-                        pass
-                
-                # Format authors
-                if isinstance(authors, list):
-                    authors_str = ', '.join(authors[:3])  # First 3 authors
-                    if len(authors) > 3:
-                        authors_str += ' et al.'
-                else:
-                    authors_str = str(authors) if authors else 'Unknown'
-                
-                papers.append({
-                    'title': title,
-                    'abstract': abstract,
-                    'authors': authors_str,
-                    'year': str(year),
-                    'citations': citation_count,
-                    'pdf_url': eprint_url or pub_url,
-                    'pub_url': pub_url,
-                })
-                
-                count += 1
-                
-            except Exception as e:
-                print(f"Error processing result: {e}")
+    # Wait before request to space out requests
+    time.sleep(2)
+
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(SEMANTIC_SCHOLAR_URL, params=params, timeout=30)
+
+            if resp.status_code == 429:
+                wait = [5, 10, 20][attempt]
+                print(f"⚠️ Semantic Scholar rate limited, waiting {wait}s... (attempt {attempt+1}/{max_retries})")
+                time.sleep(wait)
                 continue
-        
-    except Exception as e:
-        print(f"Error searching Google Scholar: {e}")
-        return []
-    
+
+            if resp.status_code != 200:
+                print(f"⚠️ Semantic Scholar returned status {resp.status_code}")
+                return []
+
+            data = resp.json()
+
+            for item in data.get("data", []):
+                title = item.get("title", "Untitled")
+                abstract = item.get("abstract") or "No abstract available"
+                ext_ids = item.get("externalIds", {}) or {}
+
+                authors_list = item.get("authors", [])
+                if authors_list:
+                    names = [a.get("name", "") for a in authors_list[:3]]
+                    authors_str = ", ".join(names)
+                    if len(authors_list) > 3:
+                        authors_str += " et al."
+                else:
+                    authors_str = "Unknown"
+
+                year = str(item.get("year") or "Unknown")
+                citations = item.get("citationCount", 0) or 0
+
+                arxiv_id = ext_ids.get("ArXiv")
+                if arxiv_id:
+                    pdf_url = f"https://arxiv.org/pdf/{arxiv_id}"
+                elif ext_ids.get("DOI"):
+                    pdf_url = f"https://doi.org/{ext_ids['DOI']}"
+                else:
+                    pdf_url = item.get("url")
+
+                papers.append({
+                    "title": title,
+                    "abstract": abstract,
+                    "authors": authors_str,
+                    "year": year,
+                    "citations": citations,
+                    "pdf_url": pdf_url,
+                    "pub_url": item.get("url") or pdf_url,
+                })
+
+            print(f"✅ Found {len(papers)} papers from Semantic Scholar")
+            _set_cache(cache_key, papers)
+            return papers
+
+        except requests.exceptions.Timeout:
+            print("⚠️ Semantic Scholar request timed out")
+            time.sleep(3)
+        except Exception as e:
+            print(f"⚠️ Unexpected error: {e}")
+            return []
+            
     return papers
 
 
-def scholar_search_and_summarize(topic, top_k=5, year_low=None, year_high=None, summarize=True):
-    """
-    Search Google Scholar, rank by relevance using embeddings, and optionally summarize.
-    
-    Args:
-        topic: Search query
-        top_k: Number of top results to return
-        year_low: Minimum publication year
-        year_high: Maximum publication year
-        summarize: Whether to generate LLM summaries
-    
-    Returns:
-        Dictionary with topic, papers, summaries, and aggregate summary
-    """
-    papers = fetch_google_scholar(topic, max_results=40, year_low=year_low, year_high=year_high)
-    
+async def scholar_search_and_summarize(topic, top_k=3, year_low=None, year_high=None, summarize=True):
+    """Search Semantic Scholar, rank by relevance, and optionally summarize."""
+    papers = fetch_semantic_scholar(topic, max_results=5, year_low=year_low, year_high=year_high)
+
     if not papers:
         return {
-            'topic': topic,
-            'papers': [],
-            'summaries': [],
-            'aggregate_summary': 'No papers found for this search.'
+            "topic": topic,
+            "papers": [],
+            "summaries": [],
+            "aggregate_summary": "No papers found for this search.",
         }
-    
-    # Create text representations for embedding
+
     texts = [f"{p['title']} {p['abstract']}" for p in papers]
-    
-    # Generate embeddings
     embeddings = embed_texts(texts)
-    
-    # Build FAISS index
+
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
-    
-    # Query embedding
+
     q_emb = embed_query(topic)
     D, I = index.search(q_emb, min(top_k, len(papers)))
-    
+
+    top_papers = [papers[idx] for idx in I[0]]
     results = []
     summaries = []
-    
-    for idx in I[0]:
-        p = papers[idx]
-        entry = p.copy()
-        
-        if summarize:
+
+    if summarize:
+        # Generate summaries sequentially (chunked) to avoid Groq TPM limits
+        print("🤖 Generating individual paper summaries...")
+        for p in top_papers:
             try:
-                summary = summarize_paper(p['title'], p['abstract'])
-                entry['summary'] = summary
-                summaries.append(summary)
+                s_result = await async_summarize_paper(p["title"], p["abstract"])
+                entry = p.copy()
+                entry["summary"] = s_result
+                summaries.append(s_result)
+                results.append(entry)
             except Exception as e:
                 print(f"Error generating summary: {e}")
-                entry['summary'] = f"Summary generation failed: {str(e)}"
-        
-        results.append(entry)
-    
-    # Generate aggregate summary
+                entry = p.copy()
+                entry["summary"] = f"Summary generation failed: {str(e)}"
+                results.append(entry)
+                
+            # Small delay between LLM calls
+            await asyncio.sleep(1)
+    else:
+        results = [p.copy() for p in top_papers]
+
     aggregate_summary = ""
     if summaries:
+        print("🤖 Generating aggregate summary...")
         try:
-            aggregate_summary = generate_aggregate_summary(topic, summaries)
+            aggregate_summary = await async_generate_aggregate_summary(topic, summaries)
         except Exception as e:
             print(f"Error generating aggregate summary: {e}")
             aggregate_summary = "Aggregate summary generation failed."
-    
+
     return {
-        'topic': topic,
-        'papers': results,
-        'summaries': summaries,
-        'aggregate_summary': aggregate_summary
+        "topic": topic,
+        "papers": results,
+        "summaries": summaries,
+        "aggregate_summary": aggregate_summary,
     }
 
 
-def generate_aggregate_summary(topic, summaries):
-    """Generate an aggregate summary from multiple paper summaries."""
+async def async_generate_aggregate_summary(topic, summaries):
     joined = "\n\n".join(
         [f"Paper {i+1}:\n{summary}" for i, summary in enumerate(summaries)]
     )
-    
+
     prompt_title = f"Aggregate summary for topic: {topic}"
     prompt_abstract = f"""
 Below are summaries of the top papers on the topic "{topic}":
@@ -176,5 +199,5 @@ Please analyze all summaries and produce a single consolidated literature overvi
 3. Research gaps and future directions
 4. Overall conclusion
 """
-    
-    return summarize_paper(prompt_title, prompt_abstract)
+
+    return await async_summarize_paper(prompt_title, prompt_abstract)

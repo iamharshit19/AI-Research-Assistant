@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-from services.llama_service import call_llm
+from core.llm import call_llm
 
 router = APIRouter()  
 

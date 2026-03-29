@@ -57,19 +57,19 @@ export default function UploadSection({ onUpload }) {
   return (
     <div className="space-y-6">
       {/* Upload Section */}
-      <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 shadow-xl">
-        <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-          <Upload className="w-5 h-5 text-indigo-400" />
-          Upload a Research Paper
+      <div className="bg-card border border-border rounded-lg p-6">
+        <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+          <Upload className="w-5 h-5" />
+          Upload Research Paper
         </h2>
 
         <div className="flex flex-col sm:flex-row gap-4 items-center">
           <label className="flex-1 w-full">
             <div className={`
-              relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-300
+              relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
               ${file
-                ? 'border-indigo-500 bg-indigo-500/10'
-                : 'border-gray-700 hover:border-gray-600 hover:bg-gray-800/50'
+                ? 'border-primary bg-primary/5'
+                : 'border-border hover:border-primary/50 hover:bg-muted/50'
               }
             `}>
               <input
@@ -85,15 +85,15 @@ export default function UploadSection({ onUpload }) {
 
               {file ? (
                 <div className="flex items-center justify-center gap-2">
-                  <FileText className="w-5 h-5 text-indigo-400" />
-                  <span className="text-gray-200 font-medium truncate max-w-xs">
+                  <FileText className="w-5 h-5 text-primary" />
+                  <span className="font-medium truncate max-w-xs">
                     {file.name}
                   </span>
                 </div>
               ) : (
                 <div>
-                  <Upload className="w-8 h-8 text-gray-500 mx-auto mb-2" />
-                  <p className="text-gray-400 text-sm">
+                  <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-muted-foreground text-sm">
                     Click or drag a file here (PDF, TXT, DOC)
                   </p>
                 </div>
@@ -105,10 +105,10 @@ export default function UploadSection({ onUpload }) {
             onClick={handleUpload}
             disabled={loading || !file}
             className={`
-              px-6 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 min-w-[140px] justify-center
+              px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 min-w-[140px] justify-center
               ${loading || !file
-                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                : 'bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white hover:shadow-xl hover:shadow-purple-500/30'
+                ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90'
               }
             `}
           >
@@ -120,7 +120,7 @@ export default function UploadSection({ onUpload }) {
             ) : (
               <>
                 <Upload className="w-4 h-4" />
-                Upload & Analyze
+                Analyze
               </>
             )}
           </button>
@@ -129,29 +129,29 @@ export default function UploadSection({ onUpload }) {
 
       {/* Summary Display */}
       {uploadResult && (
-        <div className="bg-gray-900/60 border border-emerald-500/30 rounded-2xl p-6 shadow-xl animate-fadeIn">
+        <div className="bg-card border border-border rounded-lg p-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="flex items-center gap-2 mb-4">
-            <CheckCircle className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-lg font-semibold text-white">Document Processed</h3>
+            <CheckCircle className="w-5 h-5 text-green-500" />
+            <h3 className="text-lg font-semibold">Document Processed</h3>
           </div>
 
           <div className="space-y-4">
             <div className="flex items-center gap-4 text-sm">
-              <span className="text-gray-400">File:</span>
-              <span className="text-gray-200 font-medium">{uploadResult.filename}</span>
-              <span className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded text-xs">
-                {uploadResult.chunks} chunks indexed
+              <span className="text-muted-foreground">File:</span>
+              <span className="font-medium">{uploadResult.filename}</span>
+              <span className="px-2 py-0.5 bg-secondary text-secondary-foreground rounded text-xs border border-border">
+                {uploadResult.chunks} chunks
               </span>
             </div>
 
             {uploadResult.summary && (
               <div className="mt-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Sparkles className="w-4 h-4 text-purple-400" />
-                  <h4 className="text-sm font-semibold text-purple-300">AI Summary</h4>
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-4 h-4" />
+                  <h4 className="text-sm font-semibold">Summary</h4>
                 </div>
-                <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-4">
-                  <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
+                <div className="bg-muted/50 border border-border rounded-lg p-4">
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto pr-2">
                     {uploadResult.summary}
                   </p>
                 </div>
@@ -161,12 +161,12 @@ export default function UploadSection({ onUpload }) {
         </div>
       )}
 
-      {/* Q&A Section - Only show after upload */}
+      {/* Q&A Section */}
       {uploadResult && (
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 shadow-xl">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-indigo-400" />
-            Ask Questions About Your Document
+        <div className="bg-card border border-border rounded-lg p-6">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <MessageSquare className="w-5 h-5" />
+            Ask Questions
           </h3>
 
           <div className="flex gap-3">
@@ -174,8 +174,8 @@ export default function UploadSection({ onUpload }) {
               type="text"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="Ask anything about the uploaded document..."
-              className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-100 placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+              placeholder="Ask anything about the document..."
+              className="flex-1 px-4 py-2 bg-background border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
               onKeyPress={(e) => {
                 if (e.key === 'Enter' && question.trim() && !askLoading) {
                   handleAsk();
@@ -186,10 +186,10 @@ export default function UploadSection({ onUpload }) {
               onClick={handleAsk}
               disabled={askLoading || !question.trim()}
               className={`
-                px-5 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2
+                px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2
                 ${askLoading || !question.trim()
-                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:shadow-lg hover:shadow-purple-500/30'
+                  ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                  : 'bg-primary text-primary-foreground hover:bg-primary/90'
                 }
               `}
             >
@@ -204,21 +204,21 @@ export default function UploadSection({ onUpload }) {
 
           {/* Answer Display */}
           {answer && (
-            <div className="mt-6 bg-gray-800/50 border border-gray-700 rounded-xl p-5">
-              <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-indigo-400" />
+            <div className="mt-6 bg-muted/30 border border-border rounded-lg p-6">
+              <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
                 Answer
               </h4>
-              <p className="text-gray-300 whitespace-pre-wrap leading-relaxed">
+              <p className="whitespace-pre-wrap leading-relaxed mb-4 max-h-64 overflow-y-auto pr-2">
                 {answer.answer}
               </p>
 
               {answer.sources && answer.sources.length > 0 && (
-                <div className="mt-4 pt-4 border-t border-gray-700">
-                  <h5 className="text-xs text-gray-400 mb-2">Sources:</h5>
+                <div className="pt-4 border-t border-border">
+                  <h5 className="text-xs font-semibold text-muted-foreground mb-2">Sources:</h5>
                   <div className="space-y-1">
                     {answer.sources.map((s, idx) => (
-                      <div key={idx} className="text-xs text-gray-500 truncate">
+                      <div key={idx} className="text-xs text-muted-foreground truncate">
                         • {s.filename || s.title || `Source ${idx + 1}`}
                       </div>
                     ))}

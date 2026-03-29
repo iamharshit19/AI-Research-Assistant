@@ -6,8 +6,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+.env
 venv/
 node_modules/
+node_modules
+_pycache_
 dist
 dist-ssr
 *.local

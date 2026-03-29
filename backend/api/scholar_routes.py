@@ -8,16 +8,16 @@ router = APIRouter()
 
 class ScholarQuery(BaseModel):
     topic: str
-    top_k: int = 5
+    top_k: int = 3
     year_low: Optional[int] = None
     year_high: Optional[int] = None
     summarize: bool = True
 
 
 @router.post("/search")
-def search_scholar(req: ScholarQuery):
+async def search_scholar(req: ScholarQuery):
     """Search Google Scholar and return top papers with summaries."""
-    return scholar_search_and_summarize(
+    return await scholar_search_and_summarize(
         topic=req.topic,
         top_k=req.top_k,
         year_low=req.year_low,
